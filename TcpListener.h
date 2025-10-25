@@ -8,8 +8,6 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
-#define TCP_LISTENER_DEFAULT_BUFFER_LENGTH 256
-
 class TcpListener {
 public:
   TcpListener(const std::string& ip, const std::string& port);
@@ -19,10 +17,12 @@ public:
 
 private:
   static bool initialized;
-  bool running = false;
+  std::atomic<bool> running = false;
   addrinfo* addr = nullptr;
   SOCKET serverSocket;
   std::vector<SOCKET> clients;
+  std::mutex clientsMutex;
+  std::vector<std::thread> clientThreads;
 
   void mRun();
   void mHandleClient(SOCKET client);
@@ -38,7 +38,7 @@ public:
     std::format("{} failed. Error code: {}", funcName, errorCode)) {
   }
 
-  const char* what() const noexcept override {
+  [[nodiscard]] const char* what() const noexcept override {
     return message.c_str();
   }
 

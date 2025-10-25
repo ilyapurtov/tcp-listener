@@ -1,5 +1,6 @@
 #include "TcpListener.h"
 
+#include <algorithm>
 #include <format>
 #include <iostream>
 
@@ -58,33 +59,49 @@ void TcpListener::mRun() {
       throw TcpListenerError("accept");
     }
     std::cout << "new client connected " << clientSocket << std::endl;
-    mHandleClient(clientSocket);
+    clientThreads.emplace_back([this, clientSocket] { mHandleClient(clientSocket); });
   }
 }
 
 void TcpListener::mHandleClient(const SOCKET client) {
-  clients.push_back(client);
-  int bytesReceived = 0;
-  char buffer[TCP_LISTENER_DEFAULT_BUFFER_LENGTH];
-  do {
-    constexpr int bufferLength = TCP_LISTENER_DEFAULT_BUFFER_LENGTH;
-    bytesReceived = recv(client, buffer, bufferLength, 0);
-    if (bytesReceived > 0) {
-      for (const auto& otherClient: clients) {
-        if (client == otherClient) continue;
-        if (const int sendResult = send(otherClient, buffer, bytesReceived, 0); sendResult == SOCKET_ERROR) {
+  {
+    std::lock_guard guard(clientsMutex);
+    clients.push_back(client);
+  }
+  while (running) {
+    char message[512];
+    if (const int bytesReceived = recv(client, message, 512, 0); bytesReceived > 0) {
+      std::lock_guard guard(clientsMutex);
+      for (const auto& socket : clients) {
+        if (socket == client) continue;
+        if (const int sendResult = send(socket, message, bytesReceived, 0); sendResult == SOCKET_ERROR) {
           throw TcpListenerError("send");
         }
       }
-    } else if (bytesReceived < 0) {
+    } else if (bytesReceived == 0) {
+      break;
+    } else {
       throw TcpListenerError("recv");
     }
-  } while (bytesReceived > 0);
+  }
 
+  closesocket(client);
+  {
+    std::lock_guard guard(clientsMutex);
+    const auto removed = std::ranges::remove(clients.begin(), clients.end(), client);
+    clients.erase(removed.begin(), removed.end());
+  }
+  std::cout << "client disconnected" << std::endl;
 }
 
 void TcpListener::stop() {
   running = false;
+  for (auto& thread : clientThreads) {
+    if (thread.joinable()) {
+      thread.join();
+    }
+  }
+  clientThreads.clear();
   if (initialized) {
     WSACleanup();
     initialized = false;
@@ -92,11 +109,6 @@ void TcpListener::stop() {
   if (addr) {
     freeaddrinfo(addr);
     addr = nullptr;
-  }
-  for (const auto& client: clients) {
-    if (client != INVALID_SOCKET) {
-      closesocket(client);
-    }
   }
   if (serverSocket != INVALID_SOCKET) {
     closesocket(serverSocket);
