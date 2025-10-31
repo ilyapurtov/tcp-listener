@@ -1,35 +1,81 @@
+#include "tcp/ClientManager.h"
+
 #include <iostream>
 
-#include "TcpListener.h"
+#include "tcp/TcpListener.h"
+
+#include <algorithm>
 
 #define DEFAULT_IP "127.0.0.1"
 #define DEFAULT_PORT "8080"
 
-std::unique_ptr<TcpListener> listener = nullptr;
+class Client {
+public:
+  SOCKET socket;
+  std::string name;
 
-BOOL WINAPI ConsoleHandler(const DWORD signal)
-{
+  bool operator == (const Client& rhs) const {
+    return socket == rhs.socket;
+  }
+};
+
+std::unique_ptr<TcpListener> server = nullptr;
+ClientManager<Client> clientManager;
+
+BOOL WINAPI ConsoleHandler(const DWORD signal) {
   if (signal == CTRL_C_EVENT || signal == CTRL_CLOSE_EVENT ||
-      signal == CTRL_SHUTDOWN_EVENT || signal == CTRL_BREAK_EVENT)
-  {
+      signal == CTRL_SHUTDOWN_EVENT || signal == CTRL_BREAK_EVENT) {
     std::cout << "stopping..." << std::endl;
-    listener->stop();
+    server->stop();
     return TRUE;
   }
   return FALSE;
 }
 
-int main(const int argc, char* argv[]) {
+void handleClient(const SOCKET clientSocket) {
+  const auto nickname = server->receiveMessage(clientSocket);
+  if (!nickname.has_value()) {
+    return; // disconnected
+  }
+  const Client client {clientSocket, nickname.value()};
+  clientManager.addClient(client);
+
+  std::cout << std::format("user {} connected", client.name) << std::endl;
+
+  while (server->isRunning()) {
+    if (const auto message = server->receiveMessage(clientSocket);
+        message.has_value()) {
+      clientManager.forEach([&client, &message](const Client& otherClient) {
+        if (otherClient == client) return;
+        server->sendMessage(message.value(), otherClient.socket);
+      });
+    } else {
+      break; // disconnected
+    }
+  }
+
+  if (clientSocket != INVALID_SOCKET) {
+    closesocket(clientSocket);
+  }
+  clientManager.removeClient(client);
+
+  std::cout << std::format("user {} disconnected", client.name) << std::endl;
+}
+
+int main(const int argc, char *argv[]) {
 
   SetConsoleCtrlHandler(ConsoleHandler, TRUE);
 
-  const char* ip = argc > 1 ? argv[1] : DEFAULT_IP;
-  const char* port = argc > 2 ? argv[2] : DEFAULT_PORT;
+  const char *ip = argc > 1 ? argv[1] : DEFAULT_IP;
+  const char *port = argc > 2 ? argv[2] : DEFAULT_PORT;
 
-  listener = std::make_unique<TcpListener>(ip, port);
-  listener->run([ip, port] {
-    std::cout << std::format("Server is running on {}:{}", ip, port) << std::endl;
-  });
+  server = std::make_unique<TcpListener>(ip, port);
+  server->run(
+      [&ip, &port] {
+        std::cout << std::format("Server is running on {}:{}", ip, port)
+                  << std::endl;
+      },
+      &handleClient);
 
   return 0;
 }
