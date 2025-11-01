@@ -1,13 +1,11 @@
 cmake_minimum_required(VERSION 4.0)
 project(winsockets)
 
-set(CMAKE_CXX_STANDARD 20)
+include(FetchContent)
+FetchContent_Declare(tcp_lib SOURCE_DIR D:/programming/cpp/tcp_lib)
+FetchContent_MakeAvailable(tcp_lib)
 
-add_executable(winsockets main.cpp
-        tcp/TcpListener.cpp
-        tcp/TcpSocket.h
-        tcp/TcpSocketError.h
-        tcp/WinsockInit.h
-        tcp/ClientManager.h
-        tcp/ClientManager.h)
-target_link_libraries(winsockets Ws2_32.lib)
+set(CMAKE_CXX_STANDARD 23)
+
+add_executable(winsockets main.cpp)
+target_link_libraries(winsockets PRIVATE tcp_lib)
