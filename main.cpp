@@ -2,6 +2,7 @@
 
 #include "tcp/ClientManager.h"
 #include "tcp/TcpListener.h"
+#include <format>
 
 #define DEFAULT_IP "127.0.0.1"
 #define DEFAULT_PORT "8080"
@@ -27,28 +28,30 @@ BOOL WINAPI ConsoleHandler(const DWORD signal) {
   return FALSE;
 }
 
+void broadcast(const Client &from, const std::string& message) {
+  clientManager.forEach([&](const Client &client) {
+    if (client == from) return;
+    server->sendMessage(message, client.socket);
+  });
+}
+
 void handleClient(const SOCKET clientSocket) {
-  std::cout << "connections" << std::endl;
   const auto nickname = server->receiveMessage(clientSocket);
   if (!nickname.has_value()) {
     return; // disconnected
   }
-  const Client client{clientSocket, nickname.value()};
-  clientManager.addClient(client);
+  const Client thisClient{clientSocket, nickname.value()};
+  clientManager.addClient(thisClient);
 
-  std::cout << std::format("user {} connected", client.name) << std::endl;
+  auto formatted = std::format("new user {} joined", thisClient.name);
+  std::cout << formatted << std::endl;
+  broadcast(thisClient, formatted);
 
   while (server->isRunning()) {
     if (const auto message = server->receiveMessage(clientSocket); message.has_value()) {
-      clientManager.forEach([&client, &message](const Client &otherClient) {
-        if (otherClient == client)
-          return;
-        if (server->sendMessage(message.value(), otherClient.socket)) {
-          // success
-        } else {
-          // TODO delete client on "false"
-        }
-      });
+      formatted = std::format("[{}]: {}", thisClient.name, message.value());
+      std::cout << formatted << std::endl;
+      broadcast(thisClient, formatted);
     } else {
       break; // disconnected
     }
@@ -57,9 +60,11 @@ void handleClient(const SOCKET clientSocket) {
   if (clientSocket != INVALID_SOCKET) {
     closesocket(clientSocket);
   }
-  clientManager.removeClient(client);
+  clientManager.removeClient(thisClient);
 
-  std::cout << std::format("user {} disconnected", client.name) << std::endl;
+  formatted = std::format("user {} left", thisClient.name);
+  std::cout << formatted << std::endl;
+  broadcast(thisClient, formatted);
 }
 
 int main(const int argc, char *argv[]) {
